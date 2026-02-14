@@ -183,9 +183,26 @@
     function speak(text) {
     window.speechSynthesis.cancel();
     const s = new SpeechSynthesisUtterance(text);
-    s.lang = 'ja-JP'; // 确保语种是日语
+    
+    // 明确要求日语
+    s.lang = 'ja-JP';
+    
+    // 关键：从手机系统的语音库里刷出日语人声
+    const voices = window.speechSynthesis.getVoices();
+    const jaVoice = voices.find(v => v.lang.toLowerCase().includes('ja'));
+    if (jaVoice) {
+        s.voice = jaVoice;
+    }
+
+    s.rate = 0.9; // 稍微减慢语速，听得更清楚
     window.speechSynthesis.speak(s);
+}
+
+// 补丁：解决某些手机浏览器语音包加载慢的问题
+window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+
 }
 </script>
 </body>
+
 </html>
