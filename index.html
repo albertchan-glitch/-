@@ -203,35 +203,119 @@
     const baiduUrl = `https://fanyi.baidu.com/getvoice?lan=jp&pydown=0&tpl=6&text=${encodeURIComponent(pureText)}`;
     const youdaoUrl = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(pureText)}&le=jap`;
 
-    const audio = new Audio();
-    window.currentAudio = audio;
+<script>
+    const API_KEY = 'sk-7d63bfe034c8430eb76bac0f9e00ce5b';
+    const API_URL = 'https://api.deepseek.com/chat/completions';
 
-    // --- 策略开始 ---
-    
-    // 第一步：尝试百度
-    audio.src = baiduUrl;
-    audio.play().catch(() => {
-        console.warn("百度接口失败，尝试有道...");
-        
-        // 第二步：尝试有道
-        audio.src = youdaoUrl;
-        audio.play().catch(() => {
-            console.warn("云端接口全部失效，启动本地兜底...");
+    // 初始化全局变量，防止手机端未定义报错
+    window.currentAudio = null;
+
+    const SCENE_DATA = {
+        '日常生活': ['起床', '梳头', '穿衣服', '刷牙', '洗脸', '化妆', '洗澡', '做饭', '散步', '睡觉'],
+        '工作场合': ['开会', '出差', '写邮件', '打电话', '汇报', '加班', '面试', '请假', '接待', '辞职'],
+        '旅行远足': ['登机', '坐车', '野餐', '赏花', '拍照', '预订', '问路', '购物', '换钱', '退房']
+    };
+
+    function toPage(num) {
+        const pages = document.querySelectorAll('[id^="page-"]');
+        pages.forEach(p => p.classList.add('hidden'));
+        const targetPage = document.getElementById(`page-${num}`);
+        if(targetPage) targetPage.classList.remove('hidden');
+    }
+
+    function showActions(scene) {
+        try {
+            const container = document.getElementById('action-container');
+            document.getElementById('scene-title').innerText = scene;
+            container.innerHTML = '';
+            SCENE_DATA[scene].forEach(act => {
+                const div = document.createElement('div');
+                div.className = 'action-item';
+                div.innerHTML = `<span>${act}</span><span>→</span>`;
+                div.onclick = (e) => {
+                    e.stopPropagation();
+                    doActionSearch(act);
+                };
+                container.appendChild(div);
+            });
+            toPage(2);
+        } catch(e) { console.error(e); }
+    }
+
+    async function doActionSearch(manualWord = null) {
+        const word = manualWord || document.getElementById('keywordInput').value.trim();
+        if(!word) return;
+
+        // 先显示跳转，防止用户以为没点中
+        toPage(3);
+        const list = document.getElementById('result-list');
+        list.innerHTML = '<div style="text-align:center; padding:50px; color:#8e8e93;">AI 正在分析地道搭配...</div>';
+
+        try {
+            const res = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+                body: JSON.stringify({
+                    model: "deepseek-chat",
+                    messages: [
+                        {
+                            role: "system", 
+                            content: "你是一个专业的日语老师。返回5个最地道的短语搭配（含助词）。要求：1.汉字必须使用HTML的ruby标签标注平假名。2.严格按JSON数组格式返回：[{\"jp\":\"<ruby>汉<rt>かん</rt>字<rt>じ</rt></ruby>\",\"zh\":\"翻译\"}]。"
+                        }, 
+                        {role: "user", content: word}
+                    ]
+                })
+            });
+
+            const data = await res.json();
+            const content = data.choices[0].message.content.replace(/```json|```/g, ''); // 增加鲁棒性：去除AI可能带的代码块符号
+            const phrases = JSON.parse(content);
             
-            // 第三步：本地兜底（强制指定日语）
-            window.speechSynthesis.cancel();
-            const msg = new SpeechSynthesisUtterance(pureText);
-            msg.lang = 'ja-JP'; // 强制要求日语环境
-            
-            // 尝试在本地语音包里找日语播音员
-            const voices = window.speechSynthesis.getVoices();
-            const jaVoice = voices.find(v => v.lang.includes('ja') || v.name.includes('Japanese'));
-            if (jaVoice) msg.voice = jaVoice;
-            
-            window.speechSynthesis.speak(msg);
-        });
-    });
-}
+            list.innerHTML = '';
+            phrases.forEach(p => {
+                const card = document.createElement('div');
+                card.className = 'phrase-card';
+                
+                // 预先处理好要读的文本
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = p.jp;
+                const rts = tempDiv.querySelectorAll('rt');
+                rts.forEach(rt => rt.remove());
+                const pureText = tempDiv.innerText || tempDiv.textContent;
+
+                card.onclick = () => speak(pureText);
+
+                card.innerHTML = `
+                    <div style="flex:1">
+                        <div style="font-size:20px; font-weight:600; line-height:1.8;">${p.jp}</div>
+                        <div style="color:#8e8e93; font-size:14px; margin-top:4px;">${p.zh}</div>
+                    </div>
+                    <div style="color:var(--primary); font-size:24px; padding-left:15px;">▶</div>
+                `;
+                list.appendChild(card);
+            });
+        } catch (e) {
+            console.error(e);
+            list.innerHTML = '<div class="error-msg">解析失败，请检查网络或刷新重试。</div>';
+        }
+    }
+
+    function speak(text) {
+        try {
+            if (window.currentAudio) {
+                window.currentAudio.pause();
+            }
+            const baiduUrl = `https://fanyi.baidu.com/getvoice?lan=jp&pydown=0&tpl=6&text=${encodeURIComponent(text)}`;
+            const audio = new Audio(baiduUrl);
+            window.currentAudio = audio;
+            audio.play().catch(() => {
+                // 极简兜底
+                const msg = new SpeechSynthesisUtterance(text);
+                msg.lang = 'ja-JP';
+                window.speechSynthesis.speak(msg);
+            });
+        } catch (e) { console.error(e); }
+    }
 </script>
 </body>
 </html>
